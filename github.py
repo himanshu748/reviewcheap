@@ -311,7 +311,7 @@ async def fetch_linked_issues(client, owner, repo, pr_metadata, headers) -> dict
     }
 
 
-def _decode_contents(js: dict, html_url: str = None) -> dict:
+def _decode_contents(js: dict, html_url: str | None = None) -> dict:
     content = js.get("content", "") or ""
     if js.get("encoding") == "base64":
         try:
@@ -401,7 +401,7 @@ async def _get_all_files(client, files_url, headers):
     return files
 
 
-async def fetch_pr_data(pr_url: str, github_token: str = None) -> dict:
+async def fetch_pr_data(pr_url: str, github_token: str | None = None) -> dict:
     owner, repo, pr_number = parse_pr_url(pr_url)
 
     headers = {"Accept": "application/vnd.github.v3+json", "User-Agent": "reviewcheap"}
