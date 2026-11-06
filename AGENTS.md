@@ -1,4 +1,4 @@
-# PR Review Agent Notes
+# ReviewCheap Agent Notes
 
 ## Project Shape
 - Small FastAPI app with backend modules in the repo root and a static browser UI in `static/`.

@@ -1,0 +1,27 @@
+name: Bug report
+description: Something in ReviewCheap doesn't work as expected
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what you got instead.
+    validations:
+      required: true
+  - type: input
+    id: pr
+    attributes:
+      label: PR URL reviewed (if public)
+      placeholder: https://github.com/owner/repo/pull/123
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error output
+      description: Paste the error or response. Remove any tokens or keys first.
+      render: text
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      placeholder: "local / Docker / Render / Vercel, Python 3.12, model gpt-5.6-terra"

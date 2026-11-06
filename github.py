@@ -404,7 +404,7 @@ async def _get_all_files(client, files_url, headers):
 async def fetch_pr_data(pr_url: str, github_token: str = None) -> dict:
     owner, repo, pr_number = parse_pr_url(pr_url)
 
-    headers = {"Accept": "application/vnd.github.v3+json", "User-Agent": "pr-review-agent"}
+    headers = {"Accept": "application/vnd.github.v3+json", "User-Agent": "reviewcheap"}
     token = github_token or os.getenv("GITHUB_TOKEN")
     if token and token != "your_github_token_here_optional":
         headers["Authorization"] = f"Bearer {token}"

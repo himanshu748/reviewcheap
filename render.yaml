@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: pr-review-agent
+    name: reviewcheap
     runtime: docker
     plan: free
     region: singapore

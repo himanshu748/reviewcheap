@@ -637,7 +637,7 @@
                 lines.push('');
             }
             const cost = rev.cost;
-            if (cost) lines.push(`---\n_Review by [ReviewCheap](https://github.com/himanshu748/pr-review-agent) · ${cost.model} · ~$${cost.usd} (vs $${cost.claude_price_usd} with Claude)_`);
+            if (cost) lines.push(`---\n_Review by [ReviewCheap](https://github.com/himanshu748/reviewcheap) · ${cost.model} · ~$${cost.usd} (vs $${cost.claude_price_usd} with Claude)_`);
             return lines.join('\n');
         }
 

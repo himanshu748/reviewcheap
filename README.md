@@ -1,5 +1,10 @@
 # ReviewCheap — AI PR Review Agent
 
+[![CI](https://github.com/himanshu748/reviewcheap/actions/workflows/ci.yml/badge.svg)](https://github.com/himanshu748/reviewcheap/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](requirements.txt)
+[![good first issues](https://img.shields.io/github/issues/himanshu748/reviewcheap/good%20first%20issue?label=good%20first%20issues)](https://github.com/himanshu748/reviewcheap/labels/good%20first%20issue)
+
 Senior-grade, metrics-driven PR reviews powered by **GPT-5.6**. Built with FastAPI and OpenAI's Responses API; every review displays token usage and standard list cost, while eligible data-sharing traffic can use complimentary daily tokens.
 
 ## Review pipeline (process-first)
@@ -40,7 +45,7 @@ For any GitHub PR URL, the agent produces a full review dashboard:
 
 ## Prerequisites
 
-- Python 3.9+
+- Python 3.10+
 - An OpenAI API account and API key
 - A GitHub token (optional — for private repos and higher rate limits)
 
@@ -48,8 +53,8 @@ For any GitHub PR URL, the agent produces a full review dashboard:
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/himanshu748/pr-review-agent.git
-   cd pr-review-agent
+   git clone https://github.com/himanshu748/reviewcheap.git
+   cd reviewcheap
    ```
 
 2. **Install dependencies:**
@@ -105,7 +110,7 @@ Response shape:
 ```
 
 ### `GET /healthz`
-Liveness + whether an HF token is configured.
+Liveness + whether an OpenAI API key is configured.
 
 ## How the score is computed
 
@@ -120,6 +125,10 @@ Liveness + whether an HF token is configured.
 - **AI/LLM:** OpenAI Responses API (`gpt-5.6-terra` by default, override with `OPENAI_MODEL`)
 - **Frontend:** Pure HTML/CSS/JavaScript (no external UI libraries)
 
+## Contributing
+
+Contributions are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md), then pick an issue labelled [`good first issue`](https://github.com/himanshu748/reviewcheap/labels/good%20first%20issue) or [`help wanted`](https://github.com/himanshu748/reviewcheap/labels/help%20wanted). Please read the [Code of Conduct](CODE_OF_CONDUCT.md) and report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
+
 ## License
 
-MIT
+[MIT](LICENSE)

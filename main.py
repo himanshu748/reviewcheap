@@ -17,7 +17,7 @@ from agent import review_pr
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 
-app = FastAPI(title="PR Review Agent", version="2.0")
+app = FastAPI(title="ReviewCheap", version="2.0")
 
 app.add_middleware(
     CORSMiddleware,
