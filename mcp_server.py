@@ -10,6 +10,8 @@ import json
 import os
 import time
 
+import httpx
+
 from github import fetch_pr_data
 from agent import review_pr, ALLOWED_MODELS, DEFAULT_MODEL
 
@@ -118,6 +120,6 @@ async def handle(payload):
                                                  params.get("arguments") or {}))
         except (ValueError, KeyError) as e:
             return _result(id_, _text({"error": str(e)}, is_error=True))
-        except Exception as e:
+        except httpx.HTTPError as e:
             return _result(id_, _text({"error": f"review failed: {e}"}, is_error=True))
     return _error(id_, -32601, f"method not found: {method}")
