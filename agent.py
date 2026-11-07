@@ -8,9 +8,9 @@ number is reproducible and cannot be inflated by the model just asserting a good
 overall grade.
 """
 
+import json
 import os
 import re
-import json
 
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
@@ -74,10 +74,14 @@ SEVERITY_ORDER = ["blocker", "critical", "major", "minor", "info"]
 
 
 def _grade(score: int) -> str:
-    if score >= 90: return "A"
-    if score >= 80: return "B"
-    if score >= 70: return "C"
-    if score >= 60: return "D"
+    if score >= 90:
+        return "A"
+    if score >= 80:
+        return "B"
+    if score >= 70:
+        return "C"
+    if score >= 60:
+        return "D"
     return "F"
 
 
@@ -92,7 +96,7 @@ def _normalize_scores(raw_scores: dict) -> dict:
             out[key] = None
             continue
         try:
-            out[key] = max(0, min(100, int(round(float(val)))))
+            out[key] = max(0, min(100, round(float(val))))
         except (TypeError, ValueError):
             out[key] = None
     return out
@@ -111,7 +115,7 @@ def _compute_health(scores: dict, severity_counts: dict):
     for sev in SEVERITY_ORDER:
         if severity_counts.get(sev, 0) > 0:
             cap = min(cap, SEVERITY[sev]["gate"])
-    health = int(round(min(weighted, cap)))
+    health = round(min(weighted, cap))
     return health, round(weighted, 1), cap
 
 
@@ -169,7 +173,7 @@ def _issue_block(issue_link: dict) -> str:
 def _build_prompt(pr_data: dict) -> str:
     s = pr_data.get("signals", {})
     contributing = pr_data.get("contributing", {}) or {}
-    langs = ", ".join(f"{l['language']}({l['files']})" for l in s.get("languages", [])[:6]) or "n/a"
+    langs = ", ".join(f"{lang['language']}({lang['files']})" for lang in s.get("languages", [])[:6]) or "n/a"
 
     guideline_block = (
         f"The repository's CONTRIBUTING.md ({contributing.get('path')}):\n"
@@ -274,7 +278,8 @@ async def review_pr(pr_data: dict, model: str = None) -> dict:
         if parsed is not None:
             break
         # One retry: feed the invalid output back and demand strict JSON.
-        messages = messages[:2] + [
+        messages = [
+            *messages[:2],
             {"role": "assistant", "content": content[:4000]},
             {"role": "user", "content": "That was not valid JSON. Respond again with ONLY the JSON object — no prose, no markdown fences."},
         ]
