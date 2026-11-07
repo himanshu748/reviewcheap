@@ -5,6 +5,8 @@ the deterministic health-score/severity-gate/verdict logic, cost estimation,
 and the FastAPI surface. No network or LLM calls.
 """
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -172,7 +174,8 @@ def test_assemble_review_sorts_issues_by_severity():
 
 
 def test_cost_estimate_floors_savings():
-    cost = _cost_estimate(1400, 300, "test-model")
+    cost = _cost_estimate(1400, 300, "gpt-5.6-terra")
+    assert cost["available"] is True
     assert 0 < cost["usd"] < 0.01
     assert cost["savings_pct"] < 100.0
     assert cost["claude_price_usd"] == agent.CLAUDE_REVIEW_PRICE
@@ -284,3 +287,87 @@ async def test_provider_error_does_not_leak_raw_exception(monkeypatch):
     result = await agent.review_pr({})
     assert result == {"error": "OpenAI request failed. Check API configuration and try again."}
     assert "sensitive" not in result["error"]
+
+
+def test_unknown_model_cost_is_na():
+    cost = _cost_estimate(1400, 300, "custom-provider-model")
+    assert cost["available"] is False
+    assert cost["usd"] is None
+    assert cost["savings_pct"] is None
+
+
+def test_extra_models_appended(monkeypatch):
+    monkeypatch.setenv("EXTRA_MODELS", "llama-3.1-8b, qwen-2.5-coder")
+    assert agent._allowed_models() == [
+        *agent.BASE_ALLOWED_MODELS,
+        "llama-3.1-8b",
+        "qwen-2.5-coder",
+    ]
+
+
+def test_openai_client_uses_base_url(monkeypatch):
+    captured = {}
+
+    def fake_client(**kwargs):
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://api.openrouter.ai/api/v1")
+    monkeypatch.setattr(agent, "AsyncOpenAI", fake_client)
+    agent._openai_client()
+    assert captured.get("base_url") == "https://api.openrouter.ai/api/v1"
+
+
+def test_openai_client_defaults_when_no_base_url(monkeypatch):
+    captured = {}
+
+    def fake_client(**kwargs):
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    monkeypatch.setattr(agent, "AsyncOpenAI", fake_client)
+    agent._openai_client()
+    assert "base_url" not in captured
+
+
+@pytest.mark.asyncio
+async def test_review_falls_back_to_chat_completions(monkeypatch):
+    import httpx
+    import openai
+
+    class FailingResponses:
+        async def create(self, **kwargs):
+            req = httpx.Request("POST", "https://api.provider.example/v1/responses")
+            resp = httpx.Response(404, request=req)
+            raise openai.APIStatusError("Not Found", response=resp, body={})
+
+    class Msg:
+        content = json.dumps({"summary": "ok", "scores": {}, "issues": []})
+
+    class Choice:
+        message = Msg()
+
+    class Resp:
+        def __init__(self):
+            self.choices = [Choice()]
+
+    class ChatCompletions:
+        async def create(self, **kwargs):
+            return Resp()
+
+    class FakeChat:
+        completions = ChatCompletions()
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            self.responses = FailingResponses()
+            self.chat = FakeChat()
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(agent, "AsyncOpenAI", FakeClient)
+    result = await agent.review_pr({})
+    assert "error" not in result
+    assert result["summary"] == "ok"
