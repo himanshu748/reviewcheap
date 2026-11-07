@@ -7,14 +7,13 @@ import time
 import httpx
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, Response
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from typing import Optional
 
-from github import fetch_pr_data
 from agent import review_pr
+from github import fetch_pr_data
 
 # Resolve paths relative to this file so it runs locally, in Docker, and on Spaces.
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -35,8 +34,8 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 class PRRequest(BaseModel):
     pr_url: str
-    github_token: Optional[str] = None
-    model: Optional[str] = None  # must be in agent.ALLOWED_MODELS, else default
+    github_token: str | None = None
+    model: str | None = None  # must be in agent.ALLOWED_MODELS, else default
 
 
 @app.post("/mcp")
@@ -86,7 +85,7 @@ async def create_review(request: PRRequest):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except httpx.HTTPError as e:
-        raise HTTPException(status_code=500, detail=f"GitHub API Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"GitHub API Error: {e!s}")
 
     review_result = await review_pr(pr_data, model=request.model)
 

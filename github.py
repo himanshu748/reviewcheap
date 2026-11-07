@@ -8,10 +8,10 @@ guessed, and they feed both the model prompt (as grounding context) and the
 frontend dashboard.
 """
 
-import re
-import os
 import base64
 import binascii
+import os
+import re
 from collections import defaultdict
 
 import httpx
@@ -296,7 +296,7 @@ async def fetch_linked_issues(client, owner, repo, pr_metadata, headers) -> dict
                 "closing": num in closing,
                 "assignees": assignees,
                 "author_assigned": author in assignees,
-                "labels": [l.get("name") for l in js.get("labels", [])][:6],
+                "labels": [label.get("name") for label in js.get("labels", [])][:6],
             })
         except httpx.HTTPError:
             continue
