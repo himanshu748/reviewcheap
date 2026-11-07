@@ -263,7 +263,7 @@ async def review_pr(pr_data: dict, model: str | None = None) -> dict:
                 reasoning={"effort": "medium"},
             )
             content = response.output_text.strip()
-        except Exception:
+        except openai.APIError:
             return {"error": "OpenAI request failed. Check API configuration and try again."}
 
         usage = getattr(response, "usage", None)
