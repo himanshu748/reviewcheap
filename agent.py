@@ -235,7 +235,7 @@ critical = serious bug/security; major = important, fix before merge; minor = sm
 info = nit. Be precise and avoid false positives. Every score must be justified by the diff."""
 
 
-async def review_pr(pr_data: dict, model: str = None) -> dict:
+async def review_pr(pr_data: dict, model: str | None = None) -> dict:
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key or api_key == "your_openai_api_key_here":
         return {"error": "OPENAI_API_KEY is not set in .env"}
@@ -358,7 +358,7 @@ def _extract_json(content: str):
     return None
 
 
-def _assemble_review(parsed: dict, pr_data: dict, cost: dict = None) -> dict:
+def _assemble_review(parsed: dict, pr_data: dict, cost: dict | None = None) -> dict:
     contributing = pr_data.get("contributing", {}) or {}
     issue_link = pr_data.get("issue_link", {}) or {}
     scores = _normalize_scores(parsed.get("scores", {}))
