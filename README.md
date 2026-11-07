@@ -67,6 +67,8 @@ For any GitHub PR URL, the agent produces a full review dashboard:
    OPENAI_API_KEY=your_openai_api_key_here
    GITHUB_TOKEN=your_github_token_here_optional
    OPENAI_MODEL=gpt-5.6-terra   # optional: terra, luna, or sol
+   OPENAI_BASE_URL=             # optional: OpenAI-compatible provider base URL
+   EXTRA_MODELS=                # optional: extra models behind that base URL (comma-separated)
    ```
 
 ## Usage

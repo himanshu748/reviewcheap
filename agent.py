@@ -13,7 +13,7 @@ import re
 import json
 
 from dotenv import load_dotenv
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, APIStatusError
 
 load_dotenv()
 
@@ -21,11 +21,31 @@ DEFAULT_MODEL = "gpt-5.6-terra"
 
 # Models the UI may select. Whitelist — an arbitrary user-supplied model id is
 # never passed through to the inference API.
-ALLOWED_MODELS = [
+BASE_ALLOWED_MODELS = [
     "gpt-5.6-terra",
     "gpt-5.6-luna",
     "gpt-5.6-sol",
 ]
+
+
+def _parse_extra_models(raw: str | None) -> list:
+    """Parse the EXTRA_MODELS env var (comma/space separated) into a list of ids."""
+    if not raw:
+        return []
+    return [m for m in re.split(r"[\s,]+", raw.strip()) if m]
+
+
+def _allowed_models() -> list:
+    """Effective whitelist: the base set plus any extra models from EXTRA_MODELS."""
+    models = list(BASE_ALLOWED_MODELS)
+    for model in _parse_extra_models(os.getenv("EXTRA_MODELS")):
+        if model and model not in models:
+            models.append(model)
+    return models
+
+
+ALLOWED_MODELS = _allowed_models()
+
 
 # OpenAI standard prices per 1M tokens. Complimentary data-sharing usage may
 # reduce the actual charged amount to zero; the UI labels this as list cost.
@@ -235,6 +255,37 @@ critical = serious bug/security; major = important, fix before merge; minor = sm
 info = nit. Be precise and avoid false positives. Every score must be justified by the diff."""
 
 
+def _openai_client() -> AsyncOpenAI:
+    """Build the OpenAI client, honoring an optional OpenAI-compatible base URL."""
+    kwargs = {"api_key": os.getenv("OPENAI_API_KEY")}
+    base_url = os.getenv("OPENAI_BASE_URL")
+    if base_url:
+        kwargs["base_url"] = base_url.rstrip("/")
+    return AsyncOpenAI(**kwargs)
+
+
+async def _complete(client, model: str, messages: list) -> tuple:
+    """Complete via the Responses API, falling back to Chat Completions for
+    providers that do not implement it (OpenRouter, Groq, vLLM, Ollama, ...)."""
+    try:
+        response = await client.responses.create(
+            model=model,
+            input=messages,
+            max_output_tokens=3000,
+            reasoning={"effort": "medium"},
+        )
+        return response.output_text.strip(), False, getattr(response, "usage", None)
+    except APIStatusError as exc:
+        # Endpoint/status not supported by this provider -> use Chat Completions.
+        if exc.status_code in (400, 404, 405, 415, 501):
+            chat = await client.chat.completions.create(
+                model=model, messages=messages, max_tokens=3000
+            )
+            content = getattr(chat.choices[0].message, "content", "") or ""
+            return content.strip(), True, None
+        raise
+
+
 async def review_pr(pr_data: dict, model: str = None) -> dict:
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key or api_key == "your_openai_api_key_here":
@@ -244,7 +295,7 @@ async def review_pr(pr_data: dict, model: str = None) -> dict:
         model = os.getenv("OPENAI_MODEL", DEFAULT_MODEL)
     if model not in ALLOWED_MODELS:
         model = DEFAULT_MODEL
-    client = AsyncOpenAI(api_key=api_key)
+    client = _openai_client()
 
     messages = [
         {"role": "system", "content": "You are a senior software engineer performing a thorough, metrics-driven PR review. You return only valid JSON."},
@@ -256,17 +307,10 @@ async def review_pr(pr_data: dict, model: str = None) -> dict:
     content = ""
     for attempt in range(2):
         try:
-            response = await client.responses.create(
-                model=model,
-                input=messages,
-                max_output_tokens=3000,
-                reasoning={"effort": "medium"},
-            )
-            content = response.output_text.strip()
+            content, _, usage = await _complete(client, model, messages)
         except Exception:
             return {"error": "OpenAI request failed. Check API configuration and try again."}
 
-        usage = getattr(response, "usage", None)
         total_in += getattr(usage, "input_tokens", None) or len(messages[-1]["content"]) // 4
         total_out += getattr(usage, "output_tokens", None) or len(content) // 4
 
@@ -287,7 +331,24 @@ async def review_pr(pr_data: dict, model: str = None) -> dict:
 
 
 def _cost_estimate(tokens_in: int, tokens_out: int, model: str) -> dict:
-    price_in, price_out = MODEL_PRICES.get(model, MODEL_PRICES[DEFAULT_MODEL])
+    base = {
+        "model": model,
+        "tokens_in": tokens_in,
+        "tokens_out": tokens_out,
+        "claude_price_usd": CLAUDE_REVIEW_PRICE,
+    }
+    if model not in MODEL_PRICES:
+        # Provider-specific model with no published list price - show n/a rather
+        # than guessing with a wrong price.
+        return {
+            **base,
+            "usd": None,
+            "savings_pct": None,
+            "available": False,
+            "note": "No published list price for this model/provider - cost shown as n/a.",
+        }
+
+    price_in, price_out = MODEL_PRICES[model]
     usd = tokens_in / 1e6 * price_in + tokens_out / 1e6 * price_out
     usd = round(max(usd, 0.0001), 4)
     return {
@@ -295,6 +356,7 @@ def _cost_estimate(tokens_in: int, tokens_out: int, model: str) -> dict:
         "tokens_in": tokens_in,
         "tokens_out": tokens_out,
         "usd": usd,
+        "available": True,
         "claude_price_usd": CLAUDE_REVIEW_PRICE,
         # floor, not round — 99.9968% must show 99.99%, never a false "100%"
         "savings_pct": int((1 - usd / CLAUDE_REVIEW_PRICE) * 10000) / 100,
