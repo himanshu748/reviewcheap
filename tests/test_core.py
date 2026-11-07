@@ -23,7 +23,6 @@ from agent import (
 from github import compute_signals, extract_issue_refs, parse_pr_url
 from main import app
 
-
 # --- URL parsing -----------------------------------------------------------
 
 def test_parse_pr_url_accepts_pull_url():
@@ -119,7 +118,7 @@ def _uniform_scores(v):
 
 
 def test_health_uncapped_when_no_issues():
-    health, weighted, cap = _compute_health(_uniform_scores(90), {})
+    health, _weighted, cap = _compute_health(_uniform_scores(90), {})
     assert health == 90 and cap == 100
 
 

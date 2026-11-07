@@ -10,8 +10,8 @@ import json
 import os
 import time
 
+from agent import ALLOWED_MODELS, DEFAULT_MODEL, review_pr
 from github import fetch_pr_data
-from agent import review_pr, ALLOWED_MODELS, DEFAULT_MODEL
 
 PROTOCOL_VERSIONS = {"2024-11-05", "2025-03-26", "2025-06-18"}
 SERVER_INFO = {"name": "reviewcheap", "version": "2.0.0"}
