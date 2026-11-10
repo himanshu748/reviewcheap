@@ -1,7 +1,10 @@
 # Test PR URL for demo: https://github.com/fastapi/fastapi/pull/1
 
+import json
 import os
 import time
+
+import httpx
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
@@ -42,7 +45,7 @@ async def mcp(request: Request):
     import mcp_server
     try:
         payload = await request.json()
-    except Exception:
+    except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="body must be JSON")
     response = await mcp_server.handle(payload)
     if response is None:
@@ -82,7 +85,7 @@ async def create_review(request: PRRequest):
         pr_data = await fetch_pr_data(request.pr_url, request.github_token)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
+    except httpx.HTTPError as e:
         raise HTTPException(status_code=500, detail=f"GitHub API Error: {str(e)}")
 
     review_result = await review_pr(pr_data, model=request.model)

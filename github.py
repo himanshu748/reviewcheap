@@ -11,6 +11,7 @@ frontend dashboard.
 import re
 import os
 import base64
+import binascii
 from collections import defaultdict
 
 import httpx
@@ -297,7 +298,7 @@ async def fetch_linked_issues(client, owner, repo, pr_metadata, headers) -> dict
                 "author_assigned": author in assignees,
                 "labels": [l.get("name") for l in js.get("labels", [])][:6],
             })
-        except Exception:
+        except httpx.HTTPError:
             continue
 
     linked = [i for i in issues if i["closing"]] or issues
@@ -316,7 +317,7 @@ def _decode_contents(js: dict, html_url: str | None = None) -> dict:
     if js.get("encoding") == "base64":
         try:
             content = base64.b64decode(content).decode("utf-8", "replace")
-        except Exception:
+        except binascii.Error:
             content = ""
     truncated = False
     if len(content) > CONTRIBUTING_CHAR_CAP:
@@ -363,7 +364,7 @@ async def fetch_contributing(client, owner, repo, ref, headers) -> dict:
                     )
                     if fr2.status_code == 200:
                         return _decode_contents(fr2.json(), html_url)
-    except Exception:
+    except (httpx.HTTPError, ValueError):
         pass
 
     # 2) Conventional path fallback (works for private repos / non-standard setups).
@@ -376,7 +377,7 @@ async def fetch_contributing(client, owner, repo, ref, headers) -> dict:
             )
             if fr.status_code == 200:
                 return _decode_contents(fr.json())
-        except Exception:
+        except (httpx.HTTPError, ValueError):
             continue
     return empty
 

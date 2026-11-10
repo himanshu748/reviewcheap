@@ -13,7 +13,7 @@ import re
 import json
 
 from dotenv import load_dotenv
-from openai import AsyncOpenAI
+from openai import APIError, AsyncOpenAI
 
 load_dotenv()
 
@@ -263,7 +263,7 @@ async def review_pr(pr_data: dict, model: str | None = None) -> dict:
                 reasoning={"effort": "medium"},
             )
             content = response.output_text.strip()
-        except Exception:
+        except APIError:
             return {"error": "OpenAI request failed. Check API configuration and try again."}
 
         usage = getattr(response, "usage", None)
