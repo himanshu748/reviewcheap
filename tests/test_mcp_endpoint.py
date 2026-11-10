@@ -123,7 +123,7 @@ def test_tools_call_unknown_tool_returns_error_text():
                                              "arguments": {}}})
     assert r.status_code == 200
     content = r.json()["result"]["content"][0]
-    assert content["isError"] is True
+    assert r.json()["result"]["isError"] is True
     assert "unknown tool" in content["text"]
 
 
