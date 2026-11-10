@@ -1,0 +1,27 @@
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+exclude = [".env", ".venv", "static"]
+
+[tool.ruff.lint]
+# Sensible baseline rule set: core correctness/errors, import sorting, modern
+# Python upgrades, and Ruff-specific idioms. The broad-except (BLE001) and
+# try/except/pass families plus RUF013 (implicit-Optional) are governed by the
+# sibling PRs for issues #2 and #4, so they are intentionally out of scope here.
+select = [
+  "E4",  # pycodestyle errors
+  "E7",  # pycodestyle errors (statement level)
+  "E9",  # pycodestyle errors (runtime)
+  "F",   # Pyflakes
+  "I",   # isort
+  "UP",  # pyupgrade
+  "RUF", # Ruff-specific rules
+]
+ignore = [
+  # Implicit-Optional (RUF013) is addressed in the PR for issue #4 (#8);
+  # keep this PR minimal and conflict-free while that one is open.
+  "RUF013",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "B018"]
