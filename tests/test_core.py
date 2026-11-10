@@ -273,7 +273,38 @@ async def test_review_requires_openai_key(monkeypatch):
 async def test_provider_error_does_not_leak_raw_exception(monkeypatch):
     class FailingResponses:
         async def create(self, **kwargs):
-            raise RuntimeError("upstream leaked sk-sensitive-value")
+            import httpx
+            import openai
+
+            _req = httpx.Request("POST", "https://api.openai.com/v1/responses")
+            raise openai.APIError(
+                "upstream leaked sk-sensitive-value", request=_req, body={}
+            )
+
+    class FailingClient:
+        def __init__(self, **kwargs):
+            self.responses = FailingResponses()
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(agent, "AsyncOpenAI", FailingClient)
+    result = await agent.review_pr({})
+    assert result == {"error": "OpenAI request failed. Check API configuration and try again."}
+    assert "sensitive" not in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_api_error_is_caught_not_nameerror(monkeypatch):
+    """Regression: except openai.APIError must not raise NameError (agent.py
+    imports APIError from openai; previously only AsyncOpenAI was imported).
+    """
+    import httpx
+    import openai
+
+    req = httpx.Request("POST", "https://api.openai.com/v1/responses")
+
+    class FailingResponses:
+        async def create(self, **kwargs):
+            raise openai.APIError("upstream provider failure", request=req, body={})
 
     class FailingClient:
         def __init__(self, **kwargs):
