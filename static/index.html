@@ -564,7 +564,9 @@
 
         function costBanner(cost, durationMs) {
             if (!cost) return '';
-            const usd = cost.usd < 0.01 ? '$' + cost.usd.toFixed(4) : '$' + cost.usd.toFixed(2);
+            const usd = (cost.available === false || cost.usd == null)
+                ? 'n/a'
+                : (cost.usd < 0.01 ? '$' + cost.usd.toFixed(4) : '$' + cost.usd.toFixed(2));
             const dur = durationMs ? ` · ${(durationMs / 1000).toFixed(1)}s` : '';
             return `
             <div class="cost-banner">
@@ -637,7 +639,10 @@
                 lines.push('');
             }
             const cost = rev.cost;
-            if (cost) lines.push(`---\n_Review by [ReviewCheap](https://github.com/himanshu748/reviewcheap) · ${cost.model} · ~$${cost.usd} (vs $${cost.claude_price_usd} with Claude)_`);
+            if (cost) {
+                const usdDisplay = (cost.available === false || cost.usd == null) ? 'n/a' : '$' + cost.usd;
+                lines.push(`---\n_Review by [ReviewCheap](https://github.com/himanshu748/reviewcheap) · ${cost.model} · ~${usdDisplay} (vs $${cost.claude_price_usd} with Claude)_`);
+            }
             return lines.join('\n');
         }
 
