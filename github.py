@@ -10,6 +10,7 @@ frontend dashboard.
 
 import base64
 import binascii
+import json
 import os
 import re
 from collections import defaultdict
@@ -298,7 +299,7 @@ async def fetch_linked_issues(client, owner, repo, pr_metadata, headers) -> dict
                 "author_assigned": author in assignees,
                 "labels": [label.get("name") for label in js.get("labels", [])][:6],
             })
-        except httpx.HTTPError:
+        except (httpx.HTTPError, json.JSONDecodeError):
             continue
 
     linked = [i for i in issues if i["closing"]] or issues
@@ -364,7 +365,7 @@ async def fetch_contributing(client, owner, repo, ref, headers) -> dict:
                     )
                     if fr2.status_code == 200:
                         return _decode_contents(fr2.json(), html_url)
-    except (httpx.HTTPError, ValueError):
+    except (httpx.HTTPError, json.JSONDecodeError):
         pass
 
     # 2) Conventional path fallback (works for private repos / non-standard setups).
@@ -377,7 +378,7 @@ async def fetch_contributing(client, owner, repo, ref, headers) -> dict:
             )
             if fr.status_code == 200:
                 return _decode_contents(fr.json())
-        except (httpx.HTTPError, ValueError):
+        except (httpx.HTTPError, json.JSONDecodeError):
             continue
     return empty
 
