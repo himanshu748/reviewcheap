@@ -7,6 +7,7 @@ and the FastAPI surface. No network or LLM calls.
 
 import json
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -22,7 +23,14 @@ from agent import (
     _grade,
     _normalize_scores,
 )
-from github import compute_signals, extract_issue_refs, parse_pr_url
+from github import (
+    _decode_contents,
+    compute_signals,
+    extract_issue_refs,
+    fetch_contributing,
+    fetch_linked_issues,
+    parse_pr_url,
+)
 from main import app
 
 # --- URL parsing -----------------------------------------------------------
@@ -269,6 +277,54 @@ async def test_review_requires_openai_key(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     result = await agent.review_pr({})
     assert result == {"error": "OPENAI_API_KEY is not set in .env"}
+
+
+# --- github.py decoding + fetch robustness ------------------------------------
+
+def test_decode_contents_invalid_base64_is_handled():
+    # A corrupted base64 blob must degrade to a "not found" result, not raise
+    # (this was previously a blind `except Exception`; now pinned to binascii.Error).
+    js = {"encoding": "base64", "content": "@@@not-base64@@@", "path": "CONTRIBUTING.md"}
+    out = _decode_contents(js, "https://example.com/r")
+    assert out["found"] is False
+    assert out["content"] == ""
+    assert out["path"] == "CONTRIBUTING.md"
+
+
+def test_decode_contents_valid_base64_still_decodes():
+    js = {"encoding": "base64", "content": "aGVsbG8=", "path": "CONTRIBUTING.md"}
+    out = _decode_contents(js)
+    assert out["content"] == "hello"
+
+
+class _RaiseClient:
+    def __init__(self, exc):
+        self.exc = exc
+
+    async def get(self, url, headers=None, params=None):
+        raise self.exc
+
+
+@pytest.mark.asyncio
+async def test_fetch_contributing_http_error_still_graceful():
+    # httpx.HTTPError is an expected failure: it must still yield the same
+    # graceful "no guidelines found" result as before the narrowing.
+    client = _RaiseClient(httpx.ConnectError("network down"))
+    result = await fetch_contributing(client, "owner", "repo", "main", {})
+    assert result == {
+        "found": False, "path": None, "content": "",
+        "html_url": None, "truncated": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_fetch_linked_issues_unexpected_exception_is_not_masked():
+    # A genuinely unexpected error (not HTTP/JSON) must surface so real bugs are
+    # not silently hidden behind an empty linked-issues result.
+    client = _RaiseClient(RuntimeError("internal boom"))
+    meta = {"body": "fixes #1", "title": "t", "user": {"login": "alice"}}
+    with pytest.raises(RuntimeError, match="internal boom"):
+        await fetch_linked_issues(client, "owner", "repo", meta, {})
 
 
 @pytest.mark.asyncio
