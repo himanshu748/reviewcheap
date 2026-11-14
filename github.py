@@ -96,10 +96,13 @@ class _CachingClient:
         if resp.status_code == 304 and entry is not None:
             entry["stored_at"] = now
             return _MemoryResponse(entry)
-        if resp.status_code == 200:
+        # Cache successful payloads and stable "not found" negatives (the
+        # CONTRIBUTING fallback probes many candidate paths). Transient statuses
+        # like 401/403 are never cached.
+        if resp.status_code in (200, 404):
             self._cache[key] = {
                 "stored_at": now,
-                "status_code": 200,
+                "status_code": resp.status_code,
                 "headers": dict(resp.headers),
                 "body": resp.content,
                 "etag": resp.headers.get("etag"),

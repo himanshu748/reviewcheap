@@ -101,6 +101,34 @@ async def test_second_identical_review_makes_no_uncached_calls(monkeypatch):
     assert len(fake.calls) == first_count
 
 
+class FakeAsyncClientNoContributing(FakeAsyncClient):
+    """Community profile finds no CONTRIBUTING; fallback probes 404 for each."""
+
+    async def get(self, url, *, headers=None, params=None):
+        self.calls.append((url, dict(params or {})))
+        if "community/profile" in url:
+            return FakeResponse(200, {"files": {}})
+        if "/contents/" in url:
+            return FakeResponse(404, {"message": "Not Found"})
+        if url.endswith("/files"):
+            return FakeResponse(200, FILES_PAYLOAD)
+        return FakeResponse(200, _pr_payload())
+
+
+@pytest.mark.asyncio
+async def test_second_review_caches_missing_contributing_lookups(monkeypatch):
+    github.GIT_CACHE.clear()
+    fake = FakeAsyncClientNoContributing()
+    monkeypatch.setattr(github.httpx, "AsyncClient", lambda *a, **k: fake)
+
+    await fetch_pr_data("https://github.com/o/r/pull/1")
+    first_count = len(fake.calls)
+    assert first_count == 10  # PR + files + profile + 7 candidate probes
+
+    await fetch_pr_data("https://github.com/o/r/pull/1")
+    assert len(fake.calls) == first_count
+
+
 class _RevalidatingClient:
     def __init__(self):
         self.etag = '"v1"'
