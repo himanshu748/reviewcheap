@@ -13,6 +13,7 @@ import binascii
 import json
 import os
 import re
+import time
 from collections import defaultdict
 
 import httpx
@@ -33,6 +34,79 @@ CONTRIBUTING_CANDIDATES = [
 ]
 
 PR_URL_RE = re.compile(r"https?://github\.com/([^/\s]+)/([^/\s]+)/pull/(\d+)")
+
+# --- GET caching -----------------------------------------------------------
+
+# In-memory cache for GitHub API GETs, keyed on (URL, params). Entries are
+# served from memory for CACHE_TTL_SECONDS; once stale they are revalidated with
+# a conditional request (If-None-Match / If-Modified-Since), and a 304 refreshes
+# the entry without consuming a rate-limit slot (per GitHub docs, 304s do not
+# count against the limit). A fresh hit makes no network call at all.
+CACHE_TTL_SECONDS = 300
+GIT_CACHE = {}
+
+
+class _MemoryResponse:
+    """Minimal httpx.Response-like object returned to callers on a cache hit."""
+
+    def __init__(self, entry):
+        self.status_code = entry["status_code"]
+        self.headers = entry["headers"]
+        self._body = entry["body"]
+
+    @property
+    def text(self):
+        return self._body.decode("utf-8", "replace")
+
+    def json(self):
+        return json.loads(self.text)
+
+
+class _CachingClient:
+    """Wraps an httpx.AsyncClient with the shared TTL GET cache."""
+
+    def __init__(self, inner, cache, ttl=CACHE_TTL_SECONDS):
+        self._inner = inner
+        self._cache = cache
+        self._ttl = ttl
+
+    @staticmethod
+    def _key(url, params):
+        if params:
+            return (url, tuple(sorted(params.items())))
+        return (url, None)
+
+    async def get(self, url, *, headers=None, params=None):
+        key = self._key(url, params)
+        now = time.monotonic()
+        entry = self._cache.get(key)
+
+        if entry is not None and now - entry["stored_at"] < self._ttl:
+            return _MemoryResponse(entry)
+
+        merged = dict(headers or {})
+        if entry is not None:
+            if entry.get("etag"):
+                merged["If-None-Match"] = entry["etag"]
+            elif entry.get("last_modified"):
+                merged["If-Modified-Since"] = entry["last_modified"]
+
+        resp = await self._inner.get(url, headers=merged, params=params)
+
+        if resp.status_code == 304 and entry is not None:
+            entry["stored_at"] = now
+            return _MemoryResponse(entry)
+        if resp.status_code == 200:
+            self._cache[key] = {
+                "stored_at": now,
+                "status_code": 200,
+                "headers": dict(resp.headers),
+                "body": resp.content,
+                "etag": resp.headers.get("etag"),
+                "last_modified": resp.headers.get("last-modified"),
+            }
+        return resp
+
 
 # --- classification tables ------------------------------------------------
 
@@ -414,7 +488,8 @@ async def fetch_pr_data(pr_url: str, github_token: str | None = None) -> dict:
     base_url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}"
     files_url = f"{base_url}/files"
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=30.0) as _http:
+        client = _CachingClient(_http, GIT_CACHE)
         pr_response = await client.get(base_url, headers=headers)
         if pr_response.status_code == 401 and not github_token:
             # Stale token from the environment — retry unauthenticated rather than
