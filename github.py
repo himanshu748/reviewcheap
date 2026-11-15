@@ -10,9 +10,11 @@ frontend dashboard.
 
 import base64
 import binascii
+import hashlib
 import json
 import os
 import re
+import time
 from collections import defaultdict
 
 import httpx
@@ -33,6 +35,97 @@ CONTRIBUTING_CANDIDATES = [
 ]
 
 PR_URL_RE = re.compile(r"https?://github\.com/([^/\s]+)/([^/\s]+)/pull/(\d+)")
+
+# --- GET caching -----------------------------------------------------------
+
+# In-memory cache for GitHub API GETs, keyed on (auth identity, URL, params).
+# Entries are served from memory for CACHE_TTL_SECONDS; once stale they are
+# revalidated with a conditional request (If-None-Match / If-Modified-Since),
+# and a 304 refreshes the entry without consuming a rate-limit slot (per GitHub
+# docs, 304s do not count against the limit). A fresh hit makes no network call
+# at all. The auth identity (an opaque fingerprint of the token, or "anon" for
+# unauthenticated requests) isolates entries per credential so a privileged
+# response can never be served to a different or anonymous caller.
+CACHE_TTL_SECONDS = 300
+GIT_CACHE = {}
+
+
+class _MemoryResponse:
+    """Minimal httpx.Response-like object returned to callers on a cache hit."""
+
+    def __init__(self, entry):
+        self.status_code = entry["status_code"]
+        self.headers = entry["headers"]
+        self._body = entry["body"]
+
+    @property
+    def text(self):
+        return self._body.decode("utf-8", "replace")
+
+    def json(self):
+        return json.loads(self.text)
+
+
+class _CachingClient:
+    """Wraps an httpx.AsyncClient with the shared TTL GET cache."""
+
+    def __init__(self, inner, cache, ttl=CACHE_TTL_SECONDS):
+        self._inner = inner
+        self._cache = cache
+        self._ttl = ttl
+
+    @staticmethod
+    def _auth_id(headers) -> str:
+        """Stable identifier for the request's auth identity (never the raw token)."""
+        token = ((headers or {}).get("Authorization") or "").removeprefix("Bearer ").strip()
+        if not token:
+            return "anon"
+        # Fingerprint the token so the module-global cache is isolated per
+        # credential without ever storing or logging the token itself. GitHub
+        # tokens are high-entropy, so a SHA-256 fingerprint is not
+        # brute-forceable in practice.
+        return hashlib.sha256(token.encode()).hexdigest()
+
+    @classmethod
+    def _key(cls, url, params, headers=None):
+        if params:
+            return (cls._auth_id(headers), url, tuple(sorted(params.items())))
+        return (cls._auth_id(headers), url, None)
+
+    async def get(self, url, *, headers=None, params=None):
+        key = self._key(url, params, headers)
+        now = time.monotonic()
+        entry = self._cache.get(key)
+
+        if entry is not None and now - entry["stored_at"] < self._ttl:
+            return _MemoryResponse(entry)
+
+        merged = dict(headers or {})
+        if entry is not None:
+            if entry.get("etag"):
+                merged["If-None-Match"] = entry["etag"]
+            elif entry.get("last_modified"):
+                merged["If-Modified-Since"] = entry["last_modified"]
+
+        resp = await self._inner.get(url, headers=merged, params=params)
+
+        if resp.status_code == 304 and entry is not None:
+            entry["stored_at"] = now
+            return _MemoryResponse(entry)
+        # Cache successful payloads and stable "not found" negatives (the
+        # CONTRIBUTING fallback probes many candidate paths). Transient statuses
+        # like 401/403 are never cached.
+        if resp.status_code in (200, 404):
+            self._cache[key] = {
+                "stored_at": now,
+                "status_code": resp.status_code,
+                "headers": dict(resp.headers),
+                "body": resp.content,
+                "etag": resp.headers.get("etag"),
+                "last_modified": resp.headers.get("last-modified"),
+            }
+        return resp
+
 
 # --- classification tables ------------------------------------------------
 
@@ -414,7 +507,8 @@ async def fetch_pr_data(pr_url: str, github_token: str | None = None) -> dict:
     base_url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}"
     files_url = f"{base_url}/files"
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=30.0) as _http:
+        client = _CachingClient(_http, GIT_CACHE)
         pr_response = await client.get(base_url, headers=headers)
         if pr_response.status_code == 401 and not github_token:
             # Stale token from the environment — retry unauthenticated rather than
