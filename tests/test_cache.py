@@ -141,6 +141,164 @@ class _RevalidatingClient:
         return FakeResponse(200, {"ok": True}, headers={"etag": self.etag})
 
 
+class AuthRecordingClient:
+    """Returns a different payload per Authorization header; records every call."""
+
+    def __init__(self, bodies):
+        self.bodies = bodies  # {auth_header_value_or_None: payload}
+        self.calls = []
+
+    async def get(self, url, *, headers=None, params=None):
+        self.calls.append((url, dict(headers or {})))
+        auth = (headers or {}).get("Authorization")
+        return FakeResponse(200, self.bodies[auth])
+
+
+@pytest.mark.asyncio
+async def test_cache_isolated_per_auth_identity():
+    github.GIT_CACHE.clear()
+    inner = AuthRecordingClient({
+        "Bearer token-a": {"which": "a"},
+        "Bearer token-b": {"which": "b"},
+        None: {"which": "anon"},
+    })
+    wrapper = github._CachingClient(inner, github.GIT_CACHE)
+    url = "https://api.github.com/repos/private/r/pulls/1"
+
+    a1 = await wrapper.get(url, headers={"Authorization": "Bearer token-a"})
+    assert a1.json() == {"which": "a"}
+    assert len(inner.calls) == 1
+
+    # Same authentication again -> cache hit, no network call.
+    a2 = await wrapper.get(url, headers={"Authorization": "Bearer token-a"})
+    assert a2.json() == {"which": "a"}
+    assert len(inner.calls) == 1
+
+    # Different token -> real request; must not receive A's cached body.
+    b = await wrapper.get(url, headers={"Authorization": "Bearer token-b"})
+    assert b.json() == {"which": "b"}
+    assert len(inner.calls) == 2
+
+    # Anonymous -> real request; must not receive A's or B's cached body.
+    anon = await wrapper.get(url)
+    assert anon.json() == {"which": "anon"}
+    assert len(inner.calls) == 3
+
+    # Cache keys never contain raw tokens (fingerprints only).
+    for key in github.GIT_CACHE:
+        assert "token-a" not in repr(key)
+        assert "token-b" not in repr(key)
+
+
+class StaleTokenClient:
+    def __init__(self):
+        self.calls = []
+
+    async def get(self, url, *, headers=None, params=None):
+        auth = (headers or {}).get("Authorization")
+        self.calls.append(auth)
+        if auth == "Bearer valid-a":
+            return FakeResponse(200, {"which": "a"})
+        if auth == "Bearer stale":
+            return FakeResponse(401, {"message": "Bad credentials"})
+        return FakeResponse(200, {"which": "anon"})
+
+
+@pytest.mark.asyncio
+async def test_401_retry_cannot_reuse_privileged_entry():
+    github.GIT_CACHE.clear()
+    inner = StaleTokenClient()
+    wrapper = github._CachingClient(inner, github.GIT_CACHE)
+    url = "https://api.github.com/repos/private/r/pulls/1"
+
+    # Private review with a valid token populates a privileged entry.
+    priv = await wrapper.get(url, headers={"Authorization": "Bearer valid-a"})
+    assert priv.json() == {"which": "a"}
+
+    # Stale env token -> 401 (never cached); the unauthenticated retry goes to
+    # the transport under the anonymous identity and cannot read the privileged body.
+    stale = await wrapper.get(url, headers={"Authorization": "Bearer stale"})
+    assert stale.status_code == 401
+    anon = await wrapper.get(url)
+    assert anon.json() == {"which": "anon"}
+    assert inner.calls == ["Bearer valid-a", "Bearer stale", None]
+
+
+class NotFoundClient:
+    def __init__(self):
+        self.calls = 0
+
+    async def get(self, url, *, headers=None, params=None):
+        self.calls += 1
+        if (headers or {}).get("Authorization") == "Bearer token-a":
+            return FakeResponse(404, {"message": "Not Found"})
+        return FakeResponse(200, {"which": "anon"})
+
+
+@pytest.mark.asyncio
+async def test_cached_404_not_shared_with_anonymous():
+    github.GIT_CACHE.clear()
+    inner = NotFoundClient()
+    wrapper = github._CachingClient(inner, github.GIT_CACHE)
+    url = "https://api.github.com/repos/private/r/pulls/9"
+
+    first = await wrapper.get(url, headers={"Authorization": "Bearer token-a"})
+    assert first.status_code == 404
+    assert inner.calls == 1
+
+    # Anonymous must not receive the cached privileged 404; it hits the
+    # transport and gets its own response.
+    second = await wrapper.get(url)
+    assert second.status_code == 200
+    assert inner.calls == 2
+
+
+class FakeAsyncClientAuth(FakeAsyncClient):
+    """Full fetch_pr_data client that marks authenticated vs anonymous payloads."""
+
+    async def get(self, url, *, headers=None, params=None):
+        self.calls.append((url, dict(params or {}), dict(headers or {})))
+        if "community/profile" in url:
+            return FakeResponse(200, {
+                "files": {"contributing": {
+                    "url": CONTRIBUTING_URL,
+                    "html_url": CONTRIBUTING_BLOB["html_url"],
+                }},
+            })
+        if url == CONTRIBUTING_URL:
+            return FakeResponse(200, CONTRIBUTING_BLOB)
+        if url.endswith("/files"):
+            return FakeResponse(200, FILES_PAYLOAD)
+        payload = _pr_payload()
+        payload["title"] = "PRIVATE" if (headers or {}).get("Authorization") else "PUBLIC"
+        return FakeResponse(200, payload)
+
+
+@pytest.mark.asyncio
+async def test_fetch_isolates_cache_per_credential(monkeypatch):
+    github.GIT_CACHE.clear()
+    fake = FakeAsyncClientAuth()
+    monkeypatch.setattr(github.httpx, "AsyncClient", lambda *a, **k: fake)
+    url = "https://github.com/o/r/pull/1"
+
+    # Authenticated review populates the cache under the token's identity.
+    monkeypatch.setenv("GITHUB_TOKEN", "token-a")
+    authed = await fetch_pr_data(url)
+    assert authed["title"] == "PRIVATE"
+    authed_count = len(fake.calls)
+
+    # Same credential again -> cache hits, no network calls.
+    again = await fetch_pr_data(url)
+    assert again["title"] == "PRIVATE"
+    assert len(fake.calls) == authed_count
+
+    # Anonymous review -> every request goes to GitHub; nothing reused.
+    monkeypatch.delenv("GITHUB_TOKEN")
+    anon = await fetch_pr_data(url)
+    assert anon["title"] == "PUBLIC"
+    assert len(fake.calls) > authed_count
+
+
 @pytest.mark.asyncio
 async def test_cache_revalidates_via_conditional_request_on_ttl_expiry():
     github.GIT_CACHE.clear()

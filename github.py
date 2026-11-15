@@ -10,6 +10,7 @@ frontend dashboard.
 
 import base64
 import binascii
+import hashlib
 import json
 import os
 import re
@@ -37,11 +38,14 @@ PR_URL_RE = re.compile(r"https?://github\.com/([^/\s]+)/([^/\s]+)/pull/(\d+)")
 
 # --- GET caching -----------------------------------------------------------
 
-# In-memory cache for GitHub API GETs, keyed on (URL, params). Entries are
-# served from memory for CACHE_TTL_SECONDS; once stale they are revalidated with
-# a conditional request (If-None-Match / If-Modified-Since), and a 304 refreshes
-# the entry without consuming a rate-limit slot (per GitHub docs, 304s do not
-# count against the limit). A fresh hit makes no network call at all.
+# In-memory cache for GitHub API GETs, keyed on (auth identity, URL, params).
+# Entries are served from memory for CACHE_TTL_SECONDS; once stale they are
+# revalidated with a conditional request (If-None-Match / If-Modified-Since),
+# and a 304 refreshes the entry without consuming a rate-limit slot (per GitHub
+# docs, 304s do not count against the limit). A fresh hit makes no network call
+# at all. The auth identity (an opaque fingerprint of the token, or "anon" for
+# unauthenticated requests) isolates entries per credential so a privileged
+# response can never be served to a different or anonymous caller.
 CACHE_TTL_SECONDS = 300
 GIT_CACHE = {}
 
@@ -71,13 +75,25 @@ class _CachingClient:
         self._ttl = ttl
 
     @staticmethod
-    def _key(url, params):
+    def _auth_id(headers) -> str:
+        """Stable identifier for the request's auth identity (never the raw token)."""
+        token = ((headers or {}).get("Authorization") or "").removeprefix("Bearer ").strip()
+        if not token:
+            return "anon"
+        # Fingerprint the token so the module-global cache is isolated per
+        # credential without ever storing or logging the token itself. GitHub
+        # tokens are high-entropy, so a SHA-256 fingerprint is not
+        # brute-forceable in practice.
+        return hashlib.sha256(token.encode()).hexdigest()
+
+    @classmethod
+    def _key(cls, url, params, headers=None):
         if params:
-            return (url, tuple(sorted(params.items())))
-        return (url, None)
+            return (cls._auth_id(headers), url, tuple(sorted(params.items())))
+        return (cls._auth_id(headers), url, None)
 
     async def get(self, url, *, headers=None, params=None):
-        key = self._key(url, params)
+        key = self._key(url, params, headers)
         now = time.monotonic()
         entry = self._cache.get(key)
 
